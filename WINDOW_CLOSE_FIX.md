@@ -12,7 +12,7 @@ The app now has proper window closing and quit functionality that was previously
 
 **What was wrong:**
 - Only handled `Exit` event, missing `CloseRequested` and `ExitRequested` events
-- Window close button wasn't properly responding
+- Window close button wasn't properly responding. let see
 
 **What was fixed:**
 ```rust
