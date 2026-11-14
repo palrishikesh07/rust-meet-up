@@ -17,17 +17,17 @@ import "./App.css";
 // Window control functions
 async function closeApp() {
   const active = getCurrentWindow();
-  // Stop any recording if active
+
   try {
     await stopRecording().catch(() => null);
   } catch (err) {
     console.error("Error stopping recording:", err);
   }
-  // Close the window
+
   await active.close();
 }
 
-// Utility Functions
+// Utility functions
 function hasQuestion(text: string): boolean {
   return /\?|\b(how|what|why|when|where|who|which)\b|question/i.test(text);
 }
@@ -44,7 +44,6 @@ function messageOf(err: unknown): string {
   return "Something went wrong";
 }
 
-
 function App() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [source, setSource] = useState("");
@@ -59,9 +58,11 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [answer, setAnswer] = useState("");
   const [answering, setAnswering] = useState(false);
+
   const recordingRef = useRef(false);
   const stoppingRef = useRef(false);
   const summaryTask = useRef<Promise<unknown> | null>(null);
+  const summaryGen = useRef(0);
 
   const appWindow = getCurrentWindow();
 
@@ -75,25 +76,26 @@ function App() {
       }
     };
 
-    enableContentProtection();
-  }, []);
-
-
-
+    void enableContentProtection();
+  }, [appWindow]);
 
   async function refreshDevices(showErrors = true) {
     setRefreshingDevices(true);
+
     try {
       // listDevices performs fresh native Windows device enumeration on every call.
       const listed = await listDevices();
+
       setDevices(listed.devices);
       setSource((current) => {
         // Preserve the user's selection if that endpoint is still available.
         if (current && listed.devices.some((device) => device.id === current)) {
           return current;
         }
+
         return listed.defaultSource || listed.devices[0]?.id || "";
       });
+
       if (showErrors) setError("");
     } catch (err) {
       if (showErrors) setError(messageOf(err));
@@ -104,13 +106,16 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+
     (async () => {
       try {
         const [listed, status] = await Promise.all([
           listDevices(),
           recordingStatus(),
         ]);
+
         if (cancelled) return;
+
         setDevices(listed.devices);
         setSource(listed.defaultSource);
         setRecording(status.recording);
@@ -119,10 +124,12 @@ function App() {
         setTextPath(status.textPath ?? "");
         setTranscript(status.transcript);
         setPartial(status.partial);
+        recordingRef.current = status.recording;
       } catch (err) {
         if (!cancelled) setError(messageOf(err));
       }
     })();
+
     return () => {
       cancelled = true;
     };
@@ -132,23 +139,31 @@ function App() {
   // Poll while idle so newly connected devices appear without restarting the app.
   useEffect(() => {
     if (recording) return;
+
     const timer = window.setInterval(() => {
       void refreshDevices(false);
     }, 10000);
+
     return () => window.clearInterval(timer);
   }, [recording]);
 
   useEffect(() => {
     if (!recording) return;
+
     const timer = window.setInterval(async () => {
       if (stoppingRef.current) return;
+
       try {
         const status = await recordingStatus();
+
         if (stoppingRef.current) return;
+
         if (!status.recording) {
           setRecording(false);
+          recordingRef.current = false;
           return;
         }
+
         setRecording(true);
         setElapsed(status.elapsedSecs);
         setActivePath(status.path ?? "");
@@ -159,6 +174,7 @@ function App() {
         setError(messageOf(err));
       }
     }, 500);
+
     return () => window.clearInterval(timer);
   }, [recording]);
 
@@ -166,15 +182,16 @@ function App() {
     recordingRef.current = recording;
   }, [recording]);
 
-  const summaryGen = useRef(0);
-
   function requestSummary(path: string, force = false) {
     if (!path) return Promise.resolve();
     if (!force && summaryTask.current) return summaryTask.current;
+
     const gen = ++summaryGen.current;
+
     setAnswering(true);
     setError("");
     setAnswer("");
+
     const task = summarizeTranscript(path, gen)
       .then((result) => {
         if (gen !== summaryGen.current) return;
@@ -188,41 +205,50 @@ function App() {
       .finally(() => {
         if (gen === summaryGen.current) setAnswering(false);
       });
+
     summaryTask.current = task;
     return task;
   }
 
   useEffect(() => {
-    const unlisten = listen<{ ticket: number; text: string }>("answer-delta", (event) => {
-      if (event.payload.ticket !== summaryGen.current) return;
-      setAnswer((current) => current + event.payload.text);
-    });
+    const unlisten = listen<{ ticket: number; text: string }>(
+      "answer-delta",
+      (event) => {
+        if (event.payload.ticket !== summaryGen.current) return;
+        setAnswer((current) => current + event.payload.text);
+      }
+    );
+
     return () => {
       void unlisten.then((stop) => stop());
     };
   }, []);
 
   useEffect(() => {
-    if (!recording || !textPath || summaryTask.current || !hasQuestion(transcript)) return;
+    if (!recording || !textPath || summaryTask.current || !hasQuestion(transcript)) {
+      return;
+    }
+
     void requestSummary(textPath);
   }, [recording, textPath, transcript]);
 
   useEffect(() => {
     const unlistenClose = getCurrentWindow().onCloseRequested(async (event) => {
       if (!recordingRef.current) return;
+
       event.preventDefault();
       recordingRef.current = false;
       await getCurrentWindow().destroy();
     });
 
     // Keyboard shortcuts for closing
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = (event: KeyboardEvent) => {
       // Ctrl+Q (Windows/Linux) or Cmd+Q (macOS)
-      if ((e.ctrlKey || e.metaKey) && e.key === "q") {
-        e.preventDefault();
+      if ((event.ctrlKey || event.metaKey) && event.key === "q") {
+        event.preventDefault();
         void closeApp();
       }
-      // Alt+F4 is handled by the OS/Tauri
+      // Alt+F4 is handled by the OS/Tauri.
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -236,19 +262,25 @@ function App() {
   async function toggle() {
     setBusy(true);
     setError("");
+
     try {
       if (recording) {
         recordingRef.current = false;
         stoppingRef.current = true;
         setAnswering(true);
+
         const saved = await stopRecording();
+
         setRecording(false);
         setElapsed(0);
         setPartial("");
         setActivePath(saved.path);
         setTextPath(saved.textPath);
+
         const spoken = saved.transcript.trim();
+
         if (spoken) setTranscript(spoken);
+
         if (!saved.textPath || !spoken) {
           setError("The transcript was empty, so there was nothing to answer.");
         } else if (summaryTask.current) {
@@ -258,8 +290,10 @@ function App() {
         }
       } else {
         const started = await startRecording(source);
+
         recordingRef.current = true;
         summaryTask.current = null;
+
         setAnswer("");
         setRecording(true);
         setElapsed(0);
@@ -271,7 +305,9 @@ function App() {
     } catch (err) {
       recordingRef.current = false;
       setError(messageOf(err));
+
       const status = await recordingStatus().catch(() => null);
+
       if (status) {
         setRecording(status.recording);
         setElapsed(status.elapsedSecs);
@@ -284,10 +320,8 @@ function App() {
     }
   }
 
-
-
-
   const selected = devices.find((device) => device.id === source);
+
   const outputLabel =
     devices.length === 0
       ? "No playback devices found"
@@ -297,9 +331,46 @@ function App() {
 
   return (
     <main className="app">
-      <section className="panel">
+      {/* Header: recording controls are now in the top-right corner. */}
+      <header className="app-header">
+        <div className="app-brand">
+          <span className="app-logo" aria-hidden="true">
+            M
+          </span>
+
+          <div>
+            <h2>Meet Capture</h2>
+            <p className="hint">AI Meeting Assistant</p>
+          </div>
+        </div>
+
+        <div className="header-record-controls">
+          <div className="header-timer" aria-live="off">
+            <span
+              className={recording ? "status-dot active" : "status-dot"}
+              aria-hidden="true"
+            />
+            <span>{formatClock(elapsed)}</span>
+          </div>
+
+          <button
+            type="button"
+            className={recording ? "record stop" : "record"}
+            onClick={() => void toggle()}
+            disabled={busy || (!recording && devices.length === 0)}
+            aria-pressed={recording}
+          >
+            <span className="dot" />
+            {busy ? "Please wait…" : recording ? "Stop" : "Record"}
+          </button>
+        </div>
+      </header>
+
+      {/* Answer panel */}
+      <section className="panel answer-panel">
         <h2>Answer</h2>
-        <div className="transcript answers">
+
+        <div className="transcript answers answer-scroll">
           {answer ? (
             <div className="answer-content">
               <ReactMarkdown
@@ -310,7 +381,10 @@ function App() {
 
                     return (
                       <pre className="code-block">
-                        <code className={match ? `language-${match[1]}` : ""} {...props}>
+                        <code
+                          className={match ? `language-${match[1]}` : ""}
+                          {...props}
+                        >
                           {String(children).replace(/\n$/, "")}
                         </code>
                       </pre>
@@ -331,8 +405,10 @@ function App() {
         </div>
       </section>
 
+      {/* Audio source panel */}
       <section className="panel">
         <label id="output-label">Audio source</label>
+
         <OutputPicker
           label={outputLabel}
           devices={devices}
@@ -340,7 +416,7 @@ function App() {
           disabled={recording || devices.length === 0}
           onChange={setSource}
         />
-        
+
         <button
           type="button"
           className="refresh-devices"
@@ -357,58 +433,53 @@ function App() {
             padding: "10px 16px",
             border: "1px solid rgba(255, 214, 10, 0.45)",
             borderRadius: "12px",
-            background: recording || refreshingDevices
-              ? "rgba(255, 255, 255, 0.06)"
-              : "linear-gradient(135deg, #ffe45c 0%, #ffc928 100%)",
+            background:
+              recording || refreshingDevices
+                ? "rgba(255, 255, 255, 0.06)"
+                : "linear-gradient(135deg, #ffe45c 0%, #ffc928 100%)",
             color: "#292313",
             fontSize: "13px",
             fontWeight: 700,
             letterSpacing: "0.01em",
-            boxShadow: recording || refreshingDevices
-              ? "none"
-              : "0 4px 14px rgba(255, 201, 40, 0.18)",
-            cursor: recording || refreshingDevices ? "not-allowed" : "pointer",
+            boxShadow:
+              recording || refreshingDevices
+                ? "none"
+                : "0 4px 14px rgba(255, 201, 40, 0.18)",
+            cursor:
+              recording || refreshingDevices ? "not-allowed" : "pointer",
             opacity: recording || refreshingDevices ? 0.65 : 1,
-            transition: "transform 150ms ease, box-shadow 150ms ease, opacity 150ms ease",
+            transition:
+              "transform 150ms ease, box-shadow 150ms ease, opacity 150ms ease",
           }}
         >
           <span aria-hidden="true" style={{ fontSize: "17px", lineHeight: 1 }}>
             {refreshingDevices ? "◌" : "↻"}
           </span>
-          <span>{refreshingDevices ? "Checking devices…" : "Audio devices"}</span>
+          <span>
+            {refreshingDevices ? "Checking devices…" : "Audio devices"}
+          </span>
         </button>
+
         <p className="hint">
           {selected
             ? "Choose system audio to capture meeting sound from Bluetooth headphones or speakers, or choose a microphone/headset input to capture your voice."
             : "Connect your Bluetooth headset, headphones, speakers, or microphone, then select Refresh devices."}
         </p>
 
-        <div className="record-row">
-          <button
-            type="button"
-            className={recording ? "record stop" : "record"}
-            onClick={toggle}
-            disabled={busy || (!recording && devices.length === 0)}
-            aria-pressed={recording}
-          >
-            <span className="dot" />
-            {recording ? "Stop" : "Record"}
-          </button>
-          <div>
-            <p className="clock">{formatClock(elapsed)}</p>
-            <p className="hint">
-              {recording
-                ? "Saving the audio and a .txt transcript. A line appears after a short pause."
-                : "Start while you can hear the other people. Audio transcription and answers use the OpenAI API."}
-            </p>
-          </div>
-        </div>
+        {recording ? (
+          <p className="hint recording-hint">
+            Recording in progress. Audio and transcript are being saved.
+          </p>
+        ) : null}
+
         {activePath ? <p className="path">{activePath}</p> : null}
         {error ? <p className="error">{error}</p> : null}
       </section>
 
+      {/* Transcript panel */}
       <section className="panel">
         <h2>Transcript</h2>
+
         <div className="transcript">
           {transcript || partial ? (
             <>
@@ -453,14 +524,18 @@ function OutputPicker({
 
   useEffect(() => {
     if (!open) return;
+
     const close = (event: MouseEvent) => {
       if (!root.current?.contains(event.target as Node)) setOpen(false);
     };
+
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
     };
+
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", onKey);
+
     return () => {
       document.removeEventListener("mousedown", close);
       document.removeEventListener("keydown", onKey);
@@ -481,11 +556,13 @@ function OutputPicker({
         <span>{label}</span>
         <span className="picker-chevron" aria-hidden="true" />
       </button>
+
       {open ? (
         <ul className="picker-menu" role="listbox" aria-labelledby="output-label">
           {devices.map((device) => {
             const text = `${device.label}${device.isDefault ? " (current)" : ""}`;
             const active = device.id === source;
+
             return (
               <li key={device.id} role="presentation">
                 <button

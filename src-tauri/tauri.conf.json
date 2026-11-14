@@ -20,7 +20,7 @@
         "minHeight": 300,
         "decorations": true,
         "transparent": true,
-        "alwaysOnTop": false,
+        "alwaysOnTop": true,
         "contentProtected": true,
         "resizable": true,
         "maximizable": true,
