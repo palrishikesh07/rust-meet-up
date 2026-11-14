@@ -21,7 +21,7 @@ async function closeApp() {
   try {
     await stopRecording().catch(() => null);
   } catch (err) {
-    console.error("Error stopping recording:", err);
+    console.error("Error stopping recording !", err);
   }
 
   await active.close();
